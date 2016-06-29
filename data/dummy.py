@@ -31,7 +31,7 @@ __version__ = '$Revision: 1 $'
 
 from numpy import arange, meshgrid, nan, concatenate, sin, cos, deg2rad, sign, pi, loadtxt, round, argwhere, rad2deg
 from numpy.ma import zeros, array, asarray, ones
-from numpy.random import rand
+from numpy.random import rand, randn
 from matplotlib import dates
 from os import path
 
@@ -43,11 +43,12 @@ from klib import dynamics
 DEBUG = False
 
 class Grid(atlantis.data.Grid):
-    def __init__(self, dx=0.25, dy=0.25):
-        # Initializes the variables to default values. The indices 'n', 'k', 'j'
-        # and 'i' refer to the temporal, height, meridional and zonal coordinates
-        # respectively. If one of these indexes is set to 'None', then it is
-        # assumed infinite size, which is relevant for the 'time' coordinate.
+    def __init__(self, resolution=25, xlim=None, ylim=None):
+        # Initializes the variables to default values. The indices 'n', 'k',
+        # 'j' and 'i' refer to the temporal, height, meridional and zonal
+        # coordinates respectively. If one of these indexes is set to 'None',
+        # then it is assumed infinite size, which is relevant for the 'time'
+        # coordinate.
         self.attributes = dict()
         self.dimensions = dict(n=0, k=0, j=0, i=0)
         self.coordinates = dict(n=None, k=None, j=None, i=None)
@@ -58,13 +59,21 @@ class Grid(atlantis.data.Grid):
         self.stencil_params = dict()
         
         # Loads land / ocean mask
-        mask_file = '/home/sebastian/academia/data/aviso/misc/mask025.xy.gz'
+        _path = path.dirname(__file__)
+        mask_file = '%s/mask%03d.xy.gz' % (_path, resolution)
         dat = loadtxt('%s' % (mask_file))
         lon = dat[0, 1:]
         lat = dat[1:, 0]
         mz = dat[1:, 1:]
         #lat = arange(-90., 90., dy)  + dy / 2.
         #lon = 20. + arange(0., 360., dx) - dx / 2.
+
+        # If xlim and ylim are set, calculate how many indices have to be moved
+        # in order for latitude array to start at xlim[0].
+        lon, lat, xlim, ylim, ii, jj = self.getLongitudeLatitudeLimits(lon,
+            lat, xlim, ylim)
+        self.params['xlim'], self.params['ylim'] = xlim, ylim
+        self.params['lon_i'], self.params['lat_j'] = ii, jj
         
         #
         self.name = 'sea_surface_height_above_sea_level'
@@ -77,7 +86,7 @@ class Grid(atlantis.data.Grid):
         self.coordinates = dict(n='time', k='height', j='latitude',
             i='longitude')
         self.variables = dict(
-            time = None,
+            time = atlantis.data.get_standard_variable('time', data=None),
             height = atlantis.data.get_standard_variable('height'),
             latitude = atlantis.data.get_standard_variable('latitude', 
                 data=lat),
@@ -92,7 +101,7 @@ class Grid(atlantis.data.Grid):
                     '(0), Atlantic Ocean (1), Pacific Ocean (2),  Indian Ocean'
                     ' (3), Caribbean Sea (4), Gulf of Mexico (5), Tasman Sea '
                     '(6), Bay of Bengal (7)'),
-                data = mz
+                data = mz[jj, ii]
             )
         )
         self.variables['height'].data = 0.
@@ -103,13 +112,25 @@ class Grid(atlantis.data.Grid):
         self.variables['ym'].description = 'Meridional distance.'
         self.variables['xm'].data, self.variables['ym'].data = (
             astronomy.metergrid(self.variables['longitude'].data,
-            self.variables['latitude'].data, unit='km')
+            self.variables['latitude'].data, units='km')
         )
+
+        # Determines the function parameters for
+        #
+        # f(t) = a + b\,t + c\,\sin(\omega\,t + \phi) + 
+        #   d\,\cos(\omega\,t + \phi)
+        #
+        i, j = self.dimensions['i'], self.dimensions['j']
+        self.params['a'] = 100 * randn(j, i)
+        self.params['b'] = 0.0005 + 0.001 * randn(j, i)
+        self.params['c'] = 25 * rand(j, i)
+        self.params['omega'] = 0.017202791695176148 + 0.001 * randn(j, i)
+        self.params['phi'] = pi * rand(j, i)
     
     
     def read(self, t=None, z=None, y=None, x=None, N=None, K=None, J=None,
-        I=None, var=None, result='full', components=['seasonal', 'planetary',
-        'eddy', 'noise']):
+        I=None, var=None, result='full', profile=False, dummy=False,
+        noise=True):
         """Reads dataset.
 
         PARAMETERS
@@ -129,12 +150,7 @@ class Grid(atlantis.data.Grid):
                 temporal, vertical, meridional and zonal indices
                 are returned instead ('indices'), or if only
                 variable data is returned ('var only').
-            components (list, optional) :
-                A list containing which components will be included in
-                the calculation. Options are the seasonal cycle
-                ('seasonal'), westward propagating planetary waves
-                ('planetary'), eddy fields ('eddy') and noise ('noise').
-
+        
         RETURNS
             t, z, y, x, dat (array like) :
                 If 'result' is set to 'full', then all coordinates anda
@@ -196,18 +212,11 @@ class Grid(atlantis.data.Grid):
         ym = self.variables['ym'].data[Jm, Im]
         var = zeros(shape)
         # Once the indices are all set, calculates the dummy data.
-        for n, T in enumerate(t):
-            d = zeros(shape[2:])
-            if 'seasonal' in components:
-                d += self._seasonal_cycle(T, xx, yy, A=4.)
-            if 'planetary' in components:
-                d += self._planetary_wave(T, xx, yy, A=[0.5, 1, 1., 0.5],
-                    xm=xm, ym=ym)
-            if 'eddies' in components:
-                d += self._eddies(T, xx, yy, xm=xm, ym=ym)
-            if 'noise' in components:
-                d += self._noise(shape[2:])
-            var[n, 0, :, :] = d[None, None, :, :]
+        a, b, c, omega, phi = (self.params['a'], self.params['b'],
+            self.params['c'], self.params['omega'], self.params['phi'])
+        var[:, 0, :, :] = self._function(t, a, b, c, omega, phi, t0=T0)
+        if noise:
+            var += self._noise(shape)
 
         if DEBUG:
             print 't: ', t
@@ -233,177 +242,35 @@ class Grid(atlantis.data.Grid):
             return var
 
 
-    def _seasonal_cycle(self, t, x, y, A=1.):
-        """Calculates a hypothetical seasonal cycle which is
-        proportional to the astromical length of the day.
-
+    def _function(self, t, a, b, c, omega, phi, t0=0):
         """
-        global DEBUG
-        # Checks longitude and latitude dimensions.
-        if x.shape != y.shape:
-            raise ValueError('Longitude and latitude grid dimensions do not'
-                ' match.')
-        lod = length_of_day(t, x, y)
+        Annual oscillation and trend function:
         
-        if DEBUG:
-            print 'lod: ', lod
+            f(t) = a + b\,t + c\,\sin(\omega\,t + \phi)
         
-        return A * (lod - 12.) / 12.
-
-
-    def _planetary_wave(self, t, x, y, A=1., T=None, phase=None, xm=None,
-        ym=None, mask=False):
-        """Generates a hypothetical westward propagating planetary wave
-        signal.
-
         PARAMETERS
-            t (float) :
-                Time in days.
-            x, y (array like) :
-                Longitude and latitude in degrees.
-            A (float or array like, optional) :
-                Amplitude of the Rossby wave signal. If given as a list,
-                sets the amplitude for each wave period.
-            T, phase (float or array like, optional) :
-                Gives the wave period in days and wave phase in radians.
-                If not set, assumes 3-, 6-, 12- and 24-month wave
-                periods with zero phase.
-            xm, ym (array like, optional) :
-                Zonal and meridional grid in meters.
-            mask (boolean, optional) :
-                If true, masks equatorial region, where latitude is less
-                than 5 degrees.
+            t -- Time.
+            a -- Initial value.
+            b -- Linear trend.
+            c -- Oscillation aplitude.
+            omega -- Angular frequency.
+            phi -- Phase shift.
         
         """
-        # Checks longitude and latitude dimensions.
-        if x.shape != y.shape:
-            raise ValueError('Longitude and latitude grid dimensions do not'
-                ' match.')
-        b, a = x.shape
-        
-        # Mask latitudes lower than 5 degrees.
-        if mask:
-            y = array(y, mask=(abs(y)<5.))
-        
-        # Calculate zonal and meridional grid in km, if necessary.
-        if (xm == None) | (ym == None):
-            xm, ym = astronomy.metergrid(x, y, unit='km')
-        
-        # Wave period in days and wave phase.
-        if T == None:
-            T = array([0.25, 0.5, 1., 2.]) * 365.25
-        elif type(T) in [float, int]:
-            T = array([T])
-        elif type(T) in [list, tuple]:
-            T = asarray(T)
-        if phase == None:
-            phase = arange(T.size)
-        elif type(phase) in [float, int]:
-            phase = array([phase])
-        elif type(phase) in [list, tuple]:
-            phase = asarray(phase)
-        if T.shape != phase.shape:
-            raise ValueError('Wave period and phase dimensions do not match.')
-        if type(A) in [float, int]:
-            A = array([A] * T.size)
-        elif type(A) in [list, tuple]:
-            A = asarray(A * int(T.size / len(A)))
-        
-        # Calculates theoretical phase speed [km day-1] for Rossby waves as
-        # given in Oliveira & Polito (2013).
-        phi = deg2rad(y)
-        cp = -0.2 * abs(cos(phi)) / sin(phi)**2
-        # cp = -0.2 * 1 / cos(phi)
-        # Since cp = \frac{\omega}{k}, it is possible to construct wave like features
-        # for the time periods T.
-        Ro = zeros([b, a])
-        for tt, pp, AA in zip(T, phase, A):
-            omega = 2 * pi / tt
-            k = omega / cp
-            Ro += AA * cos(k * xm - omega * t)
-        
-        return Ro
-
-
-    def _eddies(self, t, x, y, N=10, A=1., xm=None, ym=None):
-        """Generates a hypothetical eddy field signal."""
-        # Astronomical constants
-        K = astronomy.constants()
-        # Checks longitude and latitude dimensions.
-        if x.shape != y.shape:
-            raise ValueError('Longitude and latitude grid dimensions do not'
-                ' match.')
-        b, a = x.shape
-        
-        # Calculate zonal and meridional grid in km, if necessary.
-        if (xm == None) | (ym == None):
-            xm, ym = astronomy.metergrid(x, y, unit='km')
-        
-        # Loads first mode baroclinic Rossby radius of deformation file.
-        _path = path.dirname(__file__)
-        _fname = 'rossrad_25.xy.gz'
-        dat = loadtxt('%s/%s' % (_path, _fname))
-        Rx = dat[0, 1:]
-        Ry = dat[1:, 0]
-        RR = dat[1:, 1:]
-
-        # Creates a couple of eddies with diameter given by the Rossby radius
-        # of deformation and random amplitude.
-        E = zeros([b, a])
-        for n in range(N):
-            j, i = round(rand(2) * [b, a])
-            j, i = int(j), int(i)
-            #
-            dy, dx = abs(Ry - y[j, i]), abs(Rx - x[j, i])
-            Ri = argwhere(dx == dx.min())[0][0]
-            Rj = argwhere(dy == dy.min())[0][0]
-            #
-            dlambda = rad2deg(RR[Rj, Ri] / (K.a * cos(deg2rad(y[j, i]))))
-            dphi = rad2deg(RR[Rj, Ri] / K.a)
-            ii = argwhere((x[j, i] >= (x[j, i] - dlambda)) &
-                (x[j, i] <= (x[j, i] + dlambda)))
-            jj = argwhere((y[j, i] >= y[j, i] - dphi) &
-                (y[j, i] <= y[j, i] + dphi))
-            print i, j, x[j, i], y[j, i], RR[Rj, Ri], dlambda, dphi, ii, jj
-            ii, jj = meshgrid(ii, jj)
-            E[jj, ii] += A
-            raise Warning('Continue from here!')
-        
-        return E
+        if len(t.shape) == 1:
+            _t = t[:, None, None]
+        else:
+            raise Warning('Help!!! I don\'t know what to do next. :\'(')
+        f = a + b * (_t - t0)  + c * sin(omega * _t + phi)
+        #
+        return f
+    
 
     def _noise(self, shape, A=1.):
         """Random noise map.
 
-        It creates a random noise map of given 'shape' from a uniform
-        distribution over [-0.5, 0.5).
+        It creates a random noise map of given 'shape' from a normal
+        distribution.
         
         """
-        return A * (rand(*shape) - 0.5)
-
-
-def length_of_day(t, xx, yy):
-    """Calculates the length of the day.
-
-    The length of the day can be calculated as the time between sunrise
-    and sunset which can be estimated from the sunrise equation. The
-    length of the day is a function of latitude and time.
-
-    PARAMETERS
-        t (float) :
-            Time in matplotlib date format (days since 0001).
-        xx, yy (array like) :
-            Longitude and latitude coordinate arrays (in degrees) as
-            returned by numpy.meshgrid.
-
-    RETURNS
-        z (array like) :
-            The duration of the day in hours for the given parameters.
-
-    REFERENCES
-        Sunrise Equation; Wikipedia; accessed on July 01, 2013; available
-        at http://en.wikipedia.org/wiki/Sunrise_equation
-    
-    """
-    S = sun.Sun()
-    T =  dates.num2date(t)
-    return S.dayLength(T.year, T.month, T.day, xx, yy)
+        return A * randn(*shape)

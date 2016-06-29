@@ -1,8 +1,8 @@
 Atlantis
 ========
 
-Python library for atmospheric, oceanographic and hydrographic data analysis 
-and visualization.
+Python library for atmospheric, oceanographic and hydrographic data management
+analysis and visualization.
 
 According to Wikipedia:
 
@@ -48,6 +48,17 @@ INSTALLATION
 
 TO-DO
 -----
+.. Write book / manual: "Data management and analysis in oceanography"
+... leanpub.com
+.. Data browser:
+.... Log of information
+.. Cruise/expedition planner:
+... Tasks
+... Standard procedures per tasks
+... Map of stations
+... List of variables / instruments
+... Casts per station
+... Identification
 
 
 CONTRIBUTING

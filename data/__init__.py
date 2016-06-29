@@ -9,6 +9,12 @@ The package has to be able to handling multi-dimensional gridded data,
 multi-dimensional multi-point data, and associated metadata. Much of
 this is based uppon Iris library.
 
+The purpose of the CF conventions is to require conforming datasets to
+contain sufficient metadata that they are self-describing in the sense
+that each variable in the file has an associated description of what it
+represents, including physical units if appropriate, and that each value
+ can be located in space (relative to earth-based coordinates) and time.
+
 Important terms and definitions from the OGC NetCDF Core adopted by the
 present framework:
     attribute: Attributes  hold metadata. They contain information about
@@ -63,6 +69,12 @@ REFERENCES
     Iris: A Python library for Meteorology and Climatology,
     http://scitools.org.uk/iris/
 
+    Eaton, Brian, J. Gregory, B. Drach, K. Taylor, S. Hankin, J. Caron,
+    R. Signell, P. Bentley, G. Rappa, H. Höck, A. Pamment, and M. Juckes;
+    NetCDF Climate and Forecast (CF) Metadata Conventions, Version 1.6,
+    5 December, 2011; http://cfconventions.org/Data/cf-conventions/
+    cf-conventions-1.6/build/cf-conventions.html.
+
     Domenico, Ben and S. Nativi (Eds.); CF-netCDF3 Data Model Extension
     standard; Open Geospatial Consortium, Version 3.1, ref. OGC 11-165r2
     http://www.opengis.net/doc/is/netcdf-data-model-extension/1.0
@@ -74,8 +86,9 @@ __version__ = '$Revision: 1 $'
 # $Source$
 
 from lxml import etree
-from numpy import (array, zeros, arange, asarray, flatnonzero, isnan, nan,
-    ndarray, savetxt, in1d, loadtxt, meshgrid, linalg, hstack, ones, bool_)
+from numpy import (argsort, array, zeros, arange, asarray, flatnonzero, isnan,
+    nan, ndarray, savetxt, in1d, loadtxt, meshgrid, linalg, hstack, ones,
+    bool_)
 from numpy import ma
 from scipy.misc import factorial
 from os import path, listdir
@@ -83,13 +96,13 @@ from sys import stdout
 from time import time
 from warnings import warn
 
-from klib.common import profiler, num2ymd, reglist
+from klib.common import lon_n, profiler, num2ymd, reglist
 from atlantis.astronomy import metergrid
 
 import cf
 import json
 
-__all__ = ['cf', 'Grid', 'variable']
+__all__ = ['cf', 'Grid', 'Variable']
 
 DEBUG = False
 
@@ -182,10 +195,57 @@ DEBUG = False
 #
 
 
-class variable(object):
+class Variable(object):
+    # Some initializations
+    _attr_list = ['long_name', 'standard_name', 'units', 'canonical_units',
+        'description', 'grib', 'amip', 'id', 'missing_value', 'scale_factor',
+        'add_offset', 'grids', 'data', 'standard_deviation', 'flag_values',
+        'flag_meanings', 'string_format', 'symbol', 'valid_range']
+
+
     def __init__(self, **kwargs):
-        self.attributes = dict()
-        _data = None
+        """
+        Attributes
+        ----------
+        long_name : string
+            A long descriptive name which may, for example, be used for
+            labeling plots.
+        standard_name : string
+            Provides unambiguous identification of variables most
+            commonly analyzed.
+        units : string
+            A character string that specifies the units used for the
+            variable's data.
+        canonical_units : string
+            Representative units of the physical quantity. These are the
+            units in which data is stored.
+        description : string
+            The description is meant to clarify the qualifiers of the
+            fundamental quantities.
+        grib :
+            GRIB parameter codes from ECMWF and NCEP.
+        amip :
+            AMIP identifier.
+        id : int, optional
+            Identification number of the variable. This is usefull when
+            using databases.
+        missing_value : float, complex
+            Can be a scalar or vector (complex) containing values
+            indicating missing data.
+        scale_factor: float, optional
+            Factor by which data should be multiplied after being read.
+        add_offset: float, optional
+            Offset to be added to data after being read. If both
+            scale_factor and add_offset are given, data is first scaled.
+        grids :
+        data : array like
+        flag_values : array like
+            Contains a list of the possible flag values.
+        flag_meanings : string
+            A blank separated list of descriptive words or phrases, one
+            for each flag value.
+
+        """
         #
         for key, item in kwargs.items():
             try:
@@ -193,96 +253,199 @@ class variable(object):
             except:
                 print 'Warning: Invalid attribute {0}'.format(key)
                 pass
+        # Initializes other attributes if not given in kwargs.
+        for key in set(self._attr_list) - set(kwargs.keys()):
+            setattr(self, key, None)
         #
         return
-    
-    
+
+
+    def __getattr__(self, name):
+        # Checks whether attribute name is valid:
+        if name not in self._attr_list:
+            raise ValueError('Invalid attribute `{}`.'.format(name))
+        # Returns attribute value or None if value was not assigned.
+        try:
+            return self.__dict__[name]
+        except:
+            return None
+
+
+    def __setattr__(self, name, value):
+        # Checks whether attribute name is valid:
+        if name not in self._attr_list:
+            raise ValueError('Invalid attribute `{}`.'.format(name))
+        # Assigns value to class' dict of attributes.
+        self.__dict__[name] = value
+
+
+    @property
+    def long_name(self):
+        """The name of the variable."""
+        return self.__getattr__('long_name')
+
+    @long_name.setter
+    def long_name(self, value):
+        self.__setattr__('long_name', value)
+
     @property
     def standard_name(self):
         """The standard name of the variable."""
-        return self._get_attribute('standard_name')
+        return self.__getattr__('standard_name')
 
     @standard_name.setter
-    def standard_name(self, name):
-        self.attributes['standard_name'] = name
+    def standard_name(self, value):
+        self.__setattr__('standard_name', value)
 
-    
+
+    @property
+    def units(self):
+        """The units of the variable."""
+        return self.__getattr__('units')
+
+    @units.setter
+    def units(self, value):
+        self.__setattr__('units', value)
+
+
     @property
     def canonical_units(self):
         """The canonical_units of the variable."""
-        return self._get_attribute('canonical_units')
+        return self.__getattr__('canonical_units')
 
     @canonical_units.setter
-    def canonical_units(self, units):
-        self.attributes['canonical_units'] = units
-
+    def canonical_units(self, value):
+        self.__setattr__('canonical_units', value)
 
     @property
     def description(self):
-        return self._get_attribute('description')
+        return self.__getattr__('description')
 
     @description.setter
-    def description(self, s):
-        self.attributes['description'] = s
+    def description(self, value):
+        self.__setattr__('description', value)
 
 
     @property
     def grib(self):
-        return self._get_attribute('grib')
+        return self.__getattr__('grib')
 
     @grib.setter
-    def grib(self, id):
-        self.attributes['grib'] = id
+    def grib(self, value):
+        self.__setattr__('grib', value)
 
 
     @property
     def amip(self):
-        return self._get_attribute('amip')
+        return self.__getattr__('amip')
 
     @amip.setter
-    def amip(self, s):
-        self.attributes['amip'] = s
+    def amip(self, value):
+        self.__setattr__('amip', value)
 
 
     @property
     def missing_value(self):
-        return self._get_attribute('missing_value')
+        return self.__getattr__('missing_value')
 
     @missing_value.setter
-    def missing_value(self, val):
-        self.attributes['missing_value'] = val
+    def missing_value(self, value):
+        self.__setattr__('missing_value', value)
+
+
+    @property
+    def valid_range(self):
+        return self.__getattr__('valid_range')
+
+    @valid_range.setter
+    def valid_range(self, value):
+        self.__setattr__('valid_range', value)
+
+
+    @property
+    def scale_factor(self):
+        """
+        The scale factor by which data should be multiplied after being
+        read.
+
+        """
+        return self.__getattr__('scale_factor')
+
+    @scale_factor.setter
+    def scale_factor(self, value):
+        self.__setattr__('scale_factor', value)
+
+
+    @property
+    def add_offset(self):
+        """
+        The offset to be added to the data after being read. If both
+        scale_factor and add_offset attributes are present, data is
+        first scaled and then offset.
+
+        """
+        return self.__getattr__('add_offset')
+
+    @add_offset.setter
+    def add_offset(self, value):
+        self.__setattr__('add_offset', value)
 
 
     @property
     def data(self):
-        return self._data
+        return self.__getattr__('data')
 
     @data.setter
-    def data(self, val):
-        self._data = val
+    def data(self, value):
+        self.__setattr__('data', value)
 
 
     @property
     def grids(self):
         """The grid description of the variable."""
-        return self._get_attribute('grids')
-    
-    @standard_name.setter
-    def grids(self, val):
-        self.attributes['grids'] = name
-    
-    
-    def _get_attribute(self, attrib):
-        if attrib in self.attributes.keys():
-            return self.attributes[attrib]
-        else:
-            return None
-        
+        return self.__getattr__('grids')
+
+    @grids.setter
+    def grids(self, value):
+        self.__setattr__('grids', value)
+
+
+    # Extends default atlantis.data.variable class to include
+    # database indexes and variable symbol.
+    @property
+    def id(self):
+        """The ID number of the variable."""
+        return self.__getattr__('id')
+
+    @id.setter
+    def id(self, value):
+        self.__setattr__('id', value)
+
+
+    @property
+    def symbol(self):
+        """The symbol of the variable."""
+        return self.__getattr__('symbol')
+
+    @symbol.setter
+    def symbol(self, value):
+        self.__setattr__('symbol', value)
+
+
+    @property
+    def string_format(self):
+        """Defines format for data output."""
+        return self.__getattr__('string_format')
+
+    @string_format.setter
+    def string_format(self, value):
+        self.__setattr__('string_format', value)
+
 
     def json_dict(self):
         """
         Returns the variable representation as a dictionary for JSON...
-        
+
         """
         dump = dict()
         for key, value in self.__dict__.items():
@@ -299,13 +462,23 @@ class Sequence(object):
         self.params = dict(path=path, pattern=pattern)
 
 
+    def read(self):
+        """Reads sequence."""
+        return False
+
+
+    def write(self):
+        """Writes sequence."""
+        return False
+
+
 class Grid(object):
     """Defines a spatio temporal dataset grid."""
-    def __init__(self, path=None, pattern=None):
-        # Initializes the variables to default values. The indices 'n', 'k', 
-        # 'j' and 'i' refer to the temporal, height, meridional and zonal 
-        # coordinates respectively. If one of these indexes is set to 'None', 
-        # then it is assumed infinite size, which is relevant for the 'time' 
+    def __init__(self, path=None, pattern=None, xlim=None, ylim=None):
+        # Initializes the variables to default values. The indices 'n', 'k',
+        # 'j' and 'i' refer to the temporal, height, meridional and zonal
+        # coordinates respectively. If one of these indexes is set to 'None',
+        # then it is assumed infinite size, which is relevant for the 'time'
         # coordinate.
         self.attributes = dict()
         self.dimensions = dict(n=0, k=0, j=0, i=0)
@@ -317,7 +490,7 @@ class Grid(object):
         self.stencil_params = dict()
         self.default_vars = ['time', 'height', 'latitude', 'longitude', 'xm',
             'ym']
-        
+
         if path == None:
             return
         else:
@@ -334,7 +507,7 @@ class Grid(object):
         except:
             loaded = False
             pass
-        
+
         if loaded:
             try:
                 self.name = d['name']
@@ -343,11 +516,11 @@ class Grid(object):
                 self.dimensions = d['dimensions']
                 self.coordinates = d['coordinates']
                 for var, params in d['variables'].items():
-                    self.variables[var] = variable()
+                    self.variables[var] = Variable()
                     self.variables[var].__dict__ = params
             except:
                 raise IOError('Unable to read dataset description file.')
-            
+
             for key in self.variables.keys():
                 try:
                     if type(self.variables[key].data) == list:
@@ -357,22 +530,29 @@ class Grid(object):
                 except:
                     pass
 
+            # If lon_0 is set, calculate how many indices have to be moved in
+            # order for latitude array to start at lon_0.
+            lon = self.variables['longitude'].data
+            lat = self.variables['latitude'].data
+            lon, lat, xlim, ylim, ii, jj = self.getLongitudeLatitudeLimits(lon,
+                lat, xlim, ylim)
+            self.params['xlim'], self.params['ylim'] = xlim, ylim
+            self.params['lon_i'], self.params['lat_j'] = ii, jj
+            self.variables['longitude'].data = lon
+            self.variables['latitude'].data = lat
+            self.dimensions['j'] = lat.size
+            self.dimensions['i'] = lon.size
+
             # Create longitude and latitude grid in km.
-            self.variables['xm'] = variable(canonical_units='km',
-                description='Zonal distance.')
-            self.variables['ym'] = variable(canonical_units='km',
-                description='Meridional distance.')
-            self.variables['xm'].data, self.variables['ym'].data = (
-                metergrid(self.variables['longitude'].data, 
-                self.variables['latitude'].data, unit='km')
-            )
-        
-        # List files in path matching pattern. The default pattern is 
-        # '(var)_([0-9]*).xy.gz', where 'var' is the short name of the 
+            self.createMeterGrid()
+
+        # List files in path matching pattern. The default pattern is
+        # '(var)_([0-9]*).xy.gz', where 'var' is the short name of the
         # variable, i.e. 'ssh', 'sst', 'chla', etc.
         if loaded:
             var_list = list(set(self.variables.keys()) -
                 set(self.default_vars))
+            self.params['var_list'] = var_list
             if pattern == None:
                 pattern = '(%s)_([0-9]*).xy.gz' % ('|'.join(var_list))
             self.params['pattern'] = pattern
@@ -394,10 +574,10 @@ class Grid(object):
                 if len(flist) != self.dimensions['n']:
                     warn(('List of files in \'{}\' does not match temporal '
                         'dimension length.').format(var))
-        
+
         return
-    
-    
+
+
     def create(self, var=[]):
         """Creates the Atlantis dataset."""
         # Converts dataset information to JSON format and saves the data
@@ -421,9 +601,9 @@ class Grid(object):
         f = open(url, 'w')
         json.dump(dump, f, indent=2)
         f.close()
-        
+
         self.__init__(path=self.params['path'])
-        
+
         return
 
 
@@ -431,8 +611,8 @@ class Grid(object):
         """Refreshes the Atlantis dataset."""
         raise ValueError('This function is not implemented yet.')
         return
-    
-    
+
+
     def read(self, t=None, z=None, y=None, x=None, N=None, K=None, J=None,
         I=None, var=None, nonan=True, result='full', merge=False,
         profile=False, dummy=False):
@@ -481,7 +661,7 @@ class Grid(object):
         """
         global DEBUG
         t1 = time()
-        
+
         # Checks input variables for consistency.
         if (t != None) & (N != None):
             raise ValueError('Both time and temporal index were provided.')
@@ -526,6 +706,8 @@ class Grid(object):
         x = self.variables['longitude'].data[I]
         xx, yy = meshgrid(x, y)
         II, JJ = meshgrid(I, J)
+        # Switching to raw dataset indices
+        II, JJ = self.params['lon_i'][JJ, II], self.params['lat_j'][JJ, II]
         # Initializes return variable
         if var == None:
             var_list = list(set(self.variables.keys()) -
@@ -594,18 +776,18 @@ class Grid(object):
                 else:
                     stdout.write('.')
                 stdout.flush()
-        
+
         if profile:
             stdout.write('\r\n')
             stdout.flush()
 
         if var_list_length == 1:
             var = var[var.keys()[0]]
-        
+
         if DEBUG:
             print
             print 'var: ', var
-        
+
         if result == 'full':
             return t, z, y, x, var
         elif result == 'indices':
@@ -617,14 +799,14 @@ class Grid(object):
                 "assuming 'var only'." % (result))
             return var
 
-    
+
     def write(self, t, z, var_name=None, prefix='', suffix='', fmt='%.18e'):
         """Writes the data."""
         # Checks for dimension of input data
         if z.shape != (self.dimensions['j'], self.dimensions['i']):
             raise ValueError('Input data dimensions do not match dataset '
                 'dimensions.')
-        # If no variable name is set, then uses first variable from variable 
+        # If no variable name is set, then uses first variable from variable
         # list
         var_list = list(set(self.variables.keys()) - set(self.default_vars))
         n_var = len(var_list)
@@ -634,18 +816,18 @@ class Grid(object):
             else:
                 raise ValueError('For multivariate datasets, variable name '
                     'has to be specified.')
-        
+
         if n_var > 1:
             fpath = '{0}/{1}'.format(self.params['path'], var_name)
         else:
             fpath = self.params['path']
-        
+
         # Converts masked array to numpy array making sure that masked values
         # become NaN's
         if type(z) == ma.MaskedArray:
             z.data[z.mask] = nan
             z = z.data
-        
+
         dat = zeros((self.dimensions['j'] + 1, self.dimensions['i'] + 1))
         dat[0, 0] = t
         dat[0, 1:] = self.variables['longitude'].data
@@ -653,37 +835,37 @@ class Grid(object):
         dat[1:, 1:] = z
         url = '%s/%s%s_%06d%s.xy.gz' % (fpath, prefix, var_name, t, suffix)
         savetxt('%s' % (url), dat, fmt=fmt, delimiter='\t')
-        
+
         return
-    
-    
-    def climatology(self, var=None, w=None, result='year', profile=True, 
+
+
+    def climatology(self, var=None, w=None, result='year', profile=True,
         **kwargs):
         """Returns monthly climatology of the time-series.
-        
+
         PARAMETERS
             var (string, optional) :
                 Indicates which variable of the grid will be read. If
-                the parameter is a list of variables, then the data 
+                the parameter is a list of variables, then the data
                 will be returned as a list of arrays.
             w (array like) :
                 Data weight, should have same dimensions as 'z'.
             result (string) :
                 If set to 'year', returns only one year of data. If set
                 to 'full', returns the climatology for every time t.
-        
+
         OPTIONAL KEYWORD ARGUMENTS
             z, y, x (array like, optional) :
-                Sets the height, latitude and longitude for which the 
+                Sets the height, latitude and longitude for which the
                 data will be read.
             K, J, I (array like, optional) :
                 Sets the vertical, meridional and zonal indices for
                 which the data will be read.
-        
+
         RETURN
             var_clim (array like) :
                 Climatological averages.
-        
+
         """
         t1 = time()
         # Checks if optional keywords are fine
@@ -691,7 +873,7 @@ class Grid(object):
         if exargs:
             raise Warning('Invalid arguments: %s' % list(exargs))
         kwargs['result'] = 'var only'
-        
+
         # Checks for proper dimensions loading dummy data.
         d, c, b, a = self.read(dummy=True, **kwargs)
         if w != None:
@@ -701,25 +883,17 @@ class Grid(object):
         # Get list of variables to be loaded.
         if var == None:
             var = self.params['var_list']
-        
-        # Starts converting time to datetime format. Determines the start and end 
-        # of the relevant dataset to ensure that only whole years are used. 
+
+        # Starts converting time to datetime format. Determines the start and end
+        # of the relevant dataset to ensure that only whole years are used.
         # Initializes climatology variable and calculates the averages.
-        Time = num2ymd(self.variables['time'].data)
-        try:
-            start = flatnonzero(Time[:, 1] == 1)[0]
-        except:
-            start = None
-        try:
-            end = flatnonzero(Time[:, 1] == 12)[-1]
-        except:
-            end = None
+        start, end, Time = self.getFullYearsIndices()
         time_clim = arange(12) + 1
         var_clim = dict()
         for i in range(12):
             t2 = time()
             if profile:
-                s = '\rCalculating climatology... %s ' % (profiler(12, i, 0, 
+                s = '\rCalculating climatology... %s ' % (profiler(12, i, 0,
                     t1, t2),)
                 stdout.write(s)
                 stdout.flush()
@@ -776,22 +950,108 @@ class Grid(object):
         end = '%04d-%02d' % (Time[end][0], Time[end][1])
         #
         return var_clim, Time, start, end
-    
-    
+
+
+    def getFullYearsIndices(self, offset=None):
+        """
+        Returns the time indices for beginning and end of full year
+        time-series. In case the dataset has no time attribute, then
+        it will consider one year of data.
+
+        PARAMETER
+            offset (float, optional) :
+                Sets the offset for full years.
+
+        RETURNS
+            start, end (integer) :
+                Indexes of time-series.
+            Time (array) :
+                Array containing year, month, day, hour and minute.
+
+        """
+        if offset != None:
+            raise Warning('Option not implemented yet.')
+
+        if self.variables['time'].data == None:
+            return 0, 364
+
+        # Starts converting time to datetime format. Determines the start and end
+        # of the relevant dataset to ensure that only whole years are used.
+        Time = num2ymd(self.variables['time'].data)
+        try:
+            start = flatnonzero(Time[:, 1] == 1)[0]
+        except:
+            start = None
+        try:
+            end = flatnonzero(Time[:, 1] == 12)[-1]
+        except:
+            end = None
+
+        return start, end, Time
+
+
+    def getLongitudeLatitudeLimits(self, lon, lat, xlim=None, ylim=None):
+        """
+        Returns the spatial indices according to the longitude
+        and latitude limits.
+
+        PARAMETERS
+            lon, lat (array like) :
+                Longitude and latitude arrays.
+            xlim, ylim (list, optional) :
+                Longitude and latitude limits.
+
+        RETURNS
+            xlim, ylim (list) :
+                Sorted limits.
+            I, J (list) :
+                Indices mesh arrays.
+
+        """
+        # If xlim and ylim are set, calculate how many indices have to be moved
+        # in order for latitude array to start at xlim[0].
+        if xlim == None:
+            xlim = (lon.min(), lon.max())
+        if ylim == None:
+            ylim = (lat.min(), lat.max())
+        #
+        LON = lon_n(lon, xlim[1])
+        i = argsort(LON)
+        selx = i[flatnonzero((LON[i] >= xlim[0]) & (LON[i] <= xlim[1]))]
+        sely = flatnonzero((lat >= ylim[0]) & (lat <= ylim[1]))
+        ii, jj = meshgrid(selx, sely)
+        lon = LON[selx]
+        lat = lat[sely]
+        #
+        return lon, lat, xlim, ylim, ii, jj
+
+
+    def createMeterGrid(self, units='km'):
+        """Creates a meter grid based on longitude and latitude degrees."""
+        self.variables['xm'] = Variable(canonical_units=units,
+            description='Zonal distance.')
+        self.variables['ym'] = Variable(canonical_units=units,
+            description='Meridional distance.')
+        self.variables['xm'].data, self.variables['ym'].data = (
+            metergrid(self.variables['longitude'].data,
+            self.variables['latitude'].data, units=units)
+        )
+
+
     def derivative(self, A, axis='longitude', p=1, q=3, cyclic=True,
         units=None, mask=None):
         """Higher order differential.
 
         Calculates the p-th derivative of `A` with respect to the given
-        axis using stencils of width n. As default, it assumes that `A` is a 
+        axis using stencils of width n. As default, it assumes that `A` is a
         mapped field on the globe, so it is periodic in the x-direction.
         It exploits this peridicity so that there are not missing data
         points at the boundaries.
-        
+
         The gradient is computed using central differences in the
         interior and first differences at the boundaries. The returned
         gradient hence has the same shape as the input array.
-        
+
         PARAMETERS
             A (array like) :
                 Data to calculate the derivate. It has to have the same
@@ -799,7 +1059,7 @@ class Grid(object):
             axis (string, optional) :
                 Axis onto which the derivative will be calculated.
                 Values should be either 'longitude' (default), 'xm',
-                'latitude', 'ym'. 
+                'latitude', 'ym'.
             p (integer, optional) :
                 Order of the derivative to be calculated. Default is to
                 calculate the first derivative (p=1). 2*n-p+1 gives the
@@ -814,10 +1074,10 @@ class Grid(object):
                 Unit to which the spatial coordinates will be converted.
                 Accepted values are 'm' for meters, 'km' for kilometers,
                 and 'nm' for International nautical miles or 'deg' for
-                degrees. If not set (None), save units as axis will be
+                degrees. If not set (None), same units as axis will be
                 used.
             mask (array like, optional) :
-        
+
         RETURNS
             dA (array like) :
                 The calculated derivate with same dimensions as A
@@ -832,7 +1092,7 @@ class Grid(object):
             geostrophic velocity and vorticity estimation from gridded
             satellite altimeter data. Journal of Geophysical Research,
             2012, 117, C03029.
-            
+
         """
         global DEBUG
         # Checks the dimensions of the input and mask arrays
@@ -842,22 +1102,32 @@ class Grid(object):
         if mask != None:
             if mask.shape != (self.dimensions['j'], self.dimensions['i']):
                 raise ValueError('Mask arraydimensions do not match dataset '
-                    'dimensions.')            
-        
+                    'dimensions.')
+
         # Checks spacial units
         ax_units = self.variables[axis].canonical_units
         if ax_units in ['degree_north', 'degree_south', 'degree_east',
             'degree_west']:
             ax_units = 'deg'
+        scale = 1.
         if (units != None) & (ax_units != units):
             if (ax_units == 'km') & (units == 'm'):
                 scale = 1e-3
+            elif (ax_units == 'm') & (units == 'km'):
+                scale = 1e3
+            elif (ax_units == 'deg') & (units in ['m', 'km', 'nm']):
+                # Checks if meter grid exists in data set. If not,
+                # generates it.
+                if len(set(['xm', 'ym']) - set(self.variables.keys())) > 0:
+                    self.createMeterGrid(units=units)
+                    if axis == 'longitude':
+                        axis = 'xm'
+                    elif axis == 'latitude':
+                        axis = 'ym'
             else:
                 raise ValueError('Unit conversion from \'%s\' to \'%s\' not '
                     'implemented yet.' % (ax_units, units))
-        else:
-            scale = 1.
-        
+
         # Determines the axis direction
         if axis in ['longitude', 'xm']:
             direction = 'i'
@@ -871,7 +1141,7 @@ class Grid(object):
         # Calculate left and right stencils.
         q_left = (q - 1) / 2
         q_right = (q - 1) / 2
-        
+
         # If data is cyclic, pad data on boundaries according to the stencile
         # width.
         if cyclic:
@@ -883,7 +1153,7 @@ class Grid(object):
 
         # Stencil coefficients unique ID.
         coeffs_id = '%s_p%d_q%d%s' % (axis, p, q, suffix)
-        
+
         # If any parameter has changed or if the stencil coefficients for the
         # chosen direction has not been calculated yet, then calculate them.
         if coeffs_id not in self.stencil_coeffs.keys():
@@ -905,7 +1175,7 @@ class Grid(object):
                 self._derivative_stencil_coefficients(axis, direction, p=p,
                     q=q, cyclic=cyclic)
             )
-        
+
         # Calculate the p-th derivative
         dA = zeros((J, I))
         coeffs = self.stencil_coeffs[coeffs_id]
@@ -932,7 +1202,7 @@ class Grid(object):
     def _derivative_stencil_coefficients(self, axis, direction, p=1, q=3,
         cyclic=True, mask=None, profile=True):
         """Calculates the coefficients needed for the derivative.
-        
+
         PARAMETERS
             axis (string) :
                 Axis onto which the derivative will be calculated.
@@ -949,25 +1219,25 @@ class Grid(object):
             cyclic (boolean, optional) :
             mask (array like, optional) :
             profile (boolean, optional) :
-        
+
         RETURNS
-            Coefficients (a_q) needed for the linear combination of `q` 
-            points to get the first derivative according to Arbic et 
-            al. (2012) equations (20) and (22). At the boundaries 
-            forward and backward differences approximations are 
+            Coefficients (a_q) needed for the linear combination of `q`
+            points to get the first derivative according to Arbic et
+            al. (2012) equations (20) and (22). At the boundaries
+            forward and backward differences approximations are
             calculated.
-        
+
         REFERENCES
-            Cushman-Roisin, B. & Beckers, J.-M. Introduction to 
-            geophysical fluid dynamics: Physical and numerical aspects 
+            Cushman-Roisin, B. & Beckers, J.-M. Introduction to
+            geophysical fluid dynamics: Physical and numerical aspects
             Academic Press, 2011, 101, 828
-            
-            Arbic, Brian B. Scott, R. B.; Chelton, D. B.; Richman, J. 
-            G. & Shriver, J. F. Effects of stencil width on surface 
-            ocean geostrophic velocity and vorticity estimation from 
-            gridded satellite altimeter data. Journal of Geophysical 
+
+            Arbic, Brian B. Scott, R. B.; Chelton, D. B.; Richman, J.
+            G. & Shriver, J. F. Effects of stencil width on surface
+            ocean geostrophic velocity and vorticity estimation from
+            gridded satellite altimeter data. Journal of Geophysical
             Research, 2012, 117, C03029
-        
+
         """
         global DEBUG
         t1 = time()
@@ -984,9 +1254,9 @@ class Grid(object):
             mask = ones([J, I])
         else:
             mask = 1. * array(~mask)
-        
+
         # Constructs matrices according to Cushman-Roisin & Beckers (2011)
-        # equations (1.25) and adapted for variable grids as in Arbic et 
+        # equations (1.25) and adapted for variable grids as in Arbic et
         # al. (2012), equations (20), (22). The linear system of equations
         # is solved afterwards.
         coeffs = zeros((J, I, q))
@@ -1030,7 +1300,7 @@ class Grid(object):
                     B = zeros((q, 1))
                     # This tells where the p-th derivative is calculated
                     B[p] = factorial(p)
-                    C = linalg.solve(A[:q-start-stop, start:q-stop], 
+                    C = linalg.solve(A[:q-start-stop, start:q-stop],
                         B[:q-(start+stop), :])
                     smart_coeffs[da_key] = C.flatten()
                     if DEBUG:
@@ -1065,13 +1335,13 @@ class Grid(object):
                 else:
                     i0 = 0
                 coeffs = coeffs.repeat(self.dimensions['i'] + i0, axis=1)
-        
+
         return coeffs
 
 
     def derivative_smoother(self, A, q=3, n=15, epsilon=1e-5):
         """Smoothes a scalar array through derivatives and integrals.
-        
+
         PARAMETERS
             A (array like) :
             q (integer, optional) :
@@ -1080,12 +1350,12 @@ class Grid(object):
             n (integer, optional) :
                 Number of maximum iterations.
             epsilon (float, optional) :
-                Root mean square difference between subsequent 
+                Root mean square difference between subsequent
                 iterations.
-        
+
         RETURNS
             Smoothed scalar array.
-        
+
         """
         global DEBUG
         # Checks the dimensions of the input array
@@ -1100,7 +1370,7 @@ class Grid(object):
             A = A.data
         else:
             masked = False
-        
+
         # Determines zonal and meridional grid spacing
         try:
             dx = self.params['dlon']
@@ -1147,7 +1417,7 @@ class Grid(object):
             if delta > 0.:
                 smooth_A = a
                 break
-        
+
         if masked:
             smooth_A = ma.masked_where(mask, smooth_A)
         #
@@ -1155,29 +1425,29 @@ class Grid(object):
 
 
     def curl(self, A, axis_x='longitude', axis_y='latitude', **kwargs):
-        """Returns the curl of a two-dimensional vector field according 
+        """Returns the curl of a two-dimensional vector field according
         to a given stencil width.
-        
+
         The input vector array should be in complex notation, such that
         A = u + j * v, where j = (-1)**0.5.
-        
+
         Calculates the first derivative of `A` with respect x and y using
-        q stencils. As default, it assumes that `A` is a mapped vector 
+        q stencils. As default, it assumes that `A` is a mapped vector
         field on the globe, so it is periodic in the x-direction. It
         exploits this peridicity so that there are no missing data points
         at the boundaries.
-        
+
         The curl is computed using central differences in the interior
         and first differences at the boundaries. The returned gradient
         hence has the same shape as the input data array.
-        
+
         PARAMETERS
             A (array like) :
                 Complex two-dimensional data array.
             axis_x, axis_y (string, optional) :
                 The two axis onto which the derivative will be
                 calculated. Values should be either 'longitude'
-                (default), 'xm', 'latitude' (default), 'ym'. 
+                (default), 'xm', 'latitude' (default), 'ym'.
             q (integer, optional) :
                 Length of the stencil used for centered differentials.
                 The length has to be odd numbered. Default is n=3.
@@ -1190,11 +1460,11 @@ class Grid(object):
                 and 'nm' for International nautical miles or 'deg' for
                 degrees. If not set (None), save units as axis will be
                 used.
-        
+
         RETURNS
             C (ndarray) :
                 Arrays of the same shape as `A` giving the curl of `A`.
-        
+
         """
         dvdx = self.derivative(A.imag, axis=axis_x, p=1, **kwargs)
         dudy = self.derivative(A.real, axis=axis_y, p=1, **kwargs)
@@ -1214,7 +1484,7 @@ class Grid(object):
             axis_x, axis_y (string, optional) :
                 The two axis onto which the derivative will be
                 calculated. Values should be either 'longitude'
-                (default), 'xm', 'latitude' (default), 'ym'. 
+                (default), 'xm', 'latitude' (default), 'ym'.
             q (integer, optional) :
                 Length of the stencil used for centered differentials.
                 The length has to be odd numbered. Default is n=3.
@@ -1227,14 +1497,14 @@ class Grid(object):
                 and 'nm' for International nautical miles or 'deg' for
                 degrees. If not set (None), save units as axis will be
                 used.
-        
+
         RETURNS
             C (ndarray) :
                 Arrays of the same shape as `A` giving the gradient of A
                 in complex notation, such that the zonal component is
                 the real part and the meridional component is the
                 imaginary part.
-        
+
         """
         C = (self.derivative(A, axis=axis_x, p=1, **kwargs) +
             1j * self.derivative(A, axis=axis_y, p=1, **kwargs))
@@ -1246,14 +1516,14 @@ class Grid(object):
 
         The input vector array should be in complex notation, such that
         A = u + j * v, where j = (-1)**0.5.
-        
+
         PARAMETERS
             A (array like) :
                 Complex two-dimensional data array.
             axis_x, axis_y (string, optional) :
                 The two axis onto which the derivative will be
                 calculated. Values should be either 'longitude'
-                (default), 'xm', 'latitude' (default), 'ym'. 
+                (default), 'xm', 'latitude' (default), 'ym'.
             q (integer, optional) :
                 Length of the stencil used for centered differentials.
                 The length has to be odd numbered. Default is n=3.
@@ -1266,12 +1536,12 @@ class Grid(object):
                 and 'nm' for International nautical miles or 'deg' for
                 degrees. If not set (None), save units as axis will be
                 used.
-        
+
         RETURNS
             C (ndarray) :
                 Arrays of the same shape as `A` giving the divergence
                 of `A`.
-        
+
         """
         C = (self.derivative(A.real, axis=axis_x, p=1, **kwargs) +
             self.derivative(A.imag, axis=axis_y, p=1, **kwargs))
@@ -1285,14 +1555,14 @@ class Grid(object):
 
             \\nabla^2 = \frac{\partial^2 A}{\partial x^2} +
                 \frac{\partial^2 A}{\partial y^2}
-        
+
         PARAMETERS
             A (array like) :
                 Complex two-dimensional data array.
             axis_x, axis_y (string, optional) :
                 The two axis onto which the derivative will be
                 calculated. Values should be either 'longitude'
-                (default), 'xm', 'latitude' (default), 'ym'. 
+                (default), 'xm', 'latitude' (default), 'ym'.
             q (integer, optional) :
                 Length of the stencil used for centered differentials.
                 The length has to be odd numbered. Default is n=3.
@@ -1305,7 +1575,7 @@ class Grid(object):
                 and 'nm' for International nautical miles or 'deg' for
                 degrees. If not set (None), save units as axis will be
                 used.
-        
+
         RETURNS
             C (ndarray) :
                 Arrays of the same shape as `A` giving the divergence
@@ -1313,22 +1583,22 @@ class Grid(object):
 
         TODO
             Convert the Laplacian operator on a sphere!
-        
+
         """
         C = (self.derivative(A, axis=axis_x, p=2, **kwargs) +
             self.derivative(A, axis=axis_y, p=2, **kwargs))
         return C
-    
-    
+
+
     @property
     def name(self):
         """Returns a human-readable name."""
         return self._name
-    
+
     @name.setter
     def name(self, s='Unknown'):
         self._name = s
-    
+
     @property
     def description(self):
         return self._description
@@ -1339,14 +1609,16 @@ class Grid(object):
 
 
 def get_standard_variable(name, **kwargs):
-    """Reads the CF standard name table xml file and returns the default
-    parameters for the standard variable set in 'name'.
-    
+    """
+    Reads the CF standard name table xml file and returns the default
+    parameters for the standard variable set in 'name'. It the desired
+    variable is an alias, standard name is retured.
+
     """
     global DEBUG
-    
+
     # 1. Creates a variable instance and sets its attributes.
-    var = variable()
+    var = Variable()
     var.standard_name = None
     var.canonical_units = None
     var.description = None
@@ -1357,8 +1629,16 @@ def get_standard_variable(name, **kwargs):
     _fname = 'cf-standard-name-table.xml'
     xml = etree.parse('%s/%s' % (_path, _fname))
     # 3. Reads the xml document, searches for chosen standard variable and
-    # sets variable attributes.
+    # sets variable attributes. First looks at aliases and then at standard
+    # names.
     root = xml.getroot()
+    try:
+        entry = root.xpath("//alias[@id='%s']" % (name))[0]
+        for item in entry.getchildren():
+            if item.tag == 'entry_id':
+                name = item.text
+    except:
+        pass
     try:
         entry = root.xpath("//entry[@id='%s']" % (name))[0]
         var.standard_name = entry.attrib['id']

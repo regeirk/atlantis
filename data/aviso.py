@@ -144,23 +144,10 @@ class Grid(atlantis.data.Grid):
         
         # If xlim and ylim are set, calculate how many indices have to be moved
         # in order for latitude array to start at xlim[0].
-        if (xlim != None) | (ylim != None):
-            if xlim == None:
-                xlim = (lon.min(), lon.max())
-            if ylim == None:
-                ylim = (lat.min(), lat.max())
-            #
-            LON = lon_n(lon, xlim[1])
-            i = argsort(LON)
-            selx = i[flatnonzero((LON[i] >= xlim[0]) & (LON[i] <= xlim[1]))]
-            sely = flatnonzero((lat >= ylim[0]) & (lat <= ylim[1]))
-            ii, jj = meshgrid(selx, sely)
-            lon = LON[selx]
-            lat = lat[sely]
-            self.params['xlim'] = xlim
-            self.params['ylim'] = ylim
-            self.params['lon_i'] = ii
-            self.params['lat_j'] = jj
+        lon, lat, xlim, ylim, ii, jj = self.getLongitudeLatitudeLimits(lon,
+            lat, xlim, ylim)
+        self.params['xlim'], self.params['ylim'] = xlim, ylim
+        self.params['lon_i'], self.params['lat_j'] = ii, jj
         self.params['dlon'] = lon[1] - lon[0]
         self.params['dlat'] = lat[1] - lat[0]
         
@@ -330,11 +317,6 @@ class Grid(atlantis.data.Grid):
                 temporal, vertical, meridional and zonal indices
                 are returned instead ('indices'), or if only
                 variable data is returned ('var only').
-            components (list, optional) :
-                A list containing which components will be included in
-                the calculation. Options are the seasonal cycle
-                ('seasonal'), westward propagating planetary waves
-                ('planetary'), eddy fields ('eddy') and noise ('noise').
             profile (boolean, optional) :
                 Sets whether the status is send to screen.
             dummy (boolean, optional) :
@@ -387,7 +369,7 @@ class Grid(atlantis.data.Grid):
         elif J == None:
             J = arange(self.dimensions['j'])
         if x != None:
-            I = flatnonzero(in1d(self.variables['longitude'].data, y))
+            I = flatnonzero(in1d(self.variables['longitude'].data, x))
         elif I == None:
             I = arange(self.dimensions['i'])
 

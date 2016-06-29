@@ -60,8 +60,8 @@ class _NumpyAwareJSONEncoder(json.JSONEncoder):
 
 
 class Sequence(atlantis.data.Sequence):
-    """Common grid for Aviso along-track gridded delayed time products
-    (sea level anomaly, absolute dynamic topography).
+    """Common sequencial data for Aviso along-track gridded delayed time
+    products (sea level anomaly, absolute dynamic topography).
     
     """
     
@@ -186,7 +186,7 @@ class Sequence(atlantis.data.Sequence):
         # Updates dimensions, coordinates and creates time variable
         self.dimensions['n'] = len(self.attributes['time_dataset'])
         self.coordinates['n'] ='time'
-        self.variables['time'] = atlantis.data.variable(
+        self.variables['time'] = atlantis.data.Variable(
             canonical_units = 'days since 0001-01-01 UTC',
             data = array(sorted(self.attributes['time_dataset'].keys())),
             height = atlantis.data.get_standard_variable('height', data=[0.]),

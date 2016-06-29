@@ -8,7 +8,8 @@ All analysis is centered around a common framework for structured data.
 The package has to be able to handling multi-dimensional data and
 associated metadata. Much of this is based uppon Iris library
 
-This module implements ocean color dataset reading capabilities.
+This module implements Aviso FES tidal constituents dataset reading 
+capabilities.
 
 DISCLAIMER
     This software may be used, copied, or redistributed as long as it
@@ -21,7 +22,7 @@ AUTHOR
     email: sebastian.krieger@usp.br
 
 REVISION
-    1 (2013-07-28 00:51 -0300)
+    1 (2015-12-09 09:00 +0200)
 
 """
 from __future__ import division
@@ -29,41 +30,24 @@ from __future__ import division
 __version__ = '$Revision: 1 $'
 # $Source$
 
-from bz2 import BZ2File
 from matplotlib import dates
 from numpy import (arange, argsort, array, asarray, flatnonzero, in1d, isnan, 
-    ma, meshgrid, nan, ones)
-from os import listdir, remove
-from h5py import File
-#from pyhdf.SD import SD, SDC
+    ma, meshgrid, nan, ones, unique, hstack)
+from os import listdir
+from scipy.io import netcdf_file as netcdf
 from string import atof
 from sys import stdout
 from time import time
-from uuid import uuid1 as _uuid
 
 import atlantis.data
-
-from klib.common import basins, profiler, lon_n, reglist as _reglist
 from atlantis.astronomy import metergrid
+from klib.common import num2ymd, reglist as reglist
 
 DEBUG = False
 
 class Grid(atlantis.data.Grid):
-    """Common grid for ocean optical properties fro different sensors.
-    
-        SENSORS
-            SeaWiFS -- Sea-viewing Wide Field-of-view Sensor
-            MODISA -- Moderate Resolution Imaging Spectroradiometer
-    
-        PROPERTIES (PRODUCTS)
-            CHL / chla_a
-        
-        LEVEL / BINS
-            l3m -- Level 3 mapped
-    
-    """
-    def __init__(self, path=None, sensor='SeaWiFS', resolution='9km', 
-        mask_file=None, xlim=None, ylim=None):
+    """Common grid for Aviso FES tidal constituents."""
+    def __init__(self, path=None, xlim=None, ylim=None):
         # Initializes the variables to default values. The indices 'n', 'k',
         # 'j' and 'i' refer to the temporal, height, meridional and zonal
         # coordinates respectively. If one of these indexes is set to 'None',
@@ -77,70 +61,70 @@ class Grid(atlantis.data.Grid):
         self.data = dict()
         self.stencil_coeffs = dict()
         self.stencil_params = dict()
+        self.alias = dict()
 
         # Sets global parameters for grid.
         if path == None:
-            path = '/academia/data/raw/oceancolor'
-        self.params['path'] = '%s/%s' % (path, sensor)
-        self.params['mask_file'] = mask_file
-        self.params['uuid'] = str(_uuid())
-        self.params['var_list'] = ['chla']
+            path = ('/home/sebastian/academia/data/aviso/auxiliary/tide_model/'
+                'fes2012_heights/fes2012/data')
+        self.params['path'] = path
+        self.params['var_list'] = []
         
         # Generates list of files, tries to match them to the pattern and to 
         # extract the time. To help understanding the naming convetion and 
         # pattern, see the following example:
-        #   A20131612013168.L3m_8D_CHL_chlor_a_9km.bz2
-        # resolution = '[0-9]+km'
-        if sensor == 'SeaWiFS':
-            sensor_prefix = 'S'
-        elif sensor == 'MODISA':
-            sensor_prefix = 'A'
-        else:
-            sensor = '.*'
-        file_pattern = ('(%s)([0-9]{4})([0-9]{3})([0-9]{4})([0-9]{3}).(L3m)_'
-            '(8D)_(CHL)_(chlor_a)_(%s).bz2') % (sensor_prefix, resolution)
+        #   uwnd.2015.nc
+        file_pattern = '(.*).([0-9]{4}).nc'
         flist = listdir(self.params['path'])
-        flist, match = _reglist(flist, file_pattern)
+        flist, match = reglist(flist, file_pattern)
         self.params['file_list'] = flist
-
-        # Reads first file in dataset to determine array geometry and 
-        # dimenstions (lon, lat)
-        HDF = self._open_HDF('%s/%s' % (self.params['path'], 
-            self.params['file_list'][0]))
-        HDF_att = HDF.attributes()
-        lon = arange(HDF_att['Westernmost Longitude'], 
-            HDF_att['Easternmost Longitude'], HDF_att['Longitude Step'])
-        lat = arange(HDF_att['Northernmost Latitude'], 
-            HDF_att['Southernmost Latitude'], -HDF_att['Latitude Step'])
+        
+        # Gets list of variables from file match.
+        _vars, _years = zip(*match)
+        self.params['var_list'] = unique(_vars)
+        self.params['year_list'] = unique(_years)
+        
+        # Loads data from first variable and loads longitude and latitude data.
+        # We assume that all data is homogeneous throughout the dataset. Then 
+        # walks through each year and loads time vector.
+        _var = self.params['var_list'][0]
+        for _i, _year in enumerate(self.params['year_list']):
+            fname = '{}.{}.nc'.format(_var, _year)
+            try:
+                data.close()
+            except:
+                pass
+            data = self._open_file(fname)
+            #
+            if _i == 0:
+                lon = data.variables['lon'].data
+                lat = data.variables['lat'].data
+                time = data.variables['time'].data
+            else:
+                time = hstack([time, data.variables['time'].data])
+        
+        # Time in dataset is given in `hours since 1800-1-1 00:00:0.0` and we 
+        # convert it to matplotlib's date format.
+        if data.variables['time'].units == 'hours since 1800-1-1 00:00:0.0':
+            self.params['t0'] = dates.date2num(dates.datetime.datetime(1800, 1, 1, 0, 0))
+            time = self.params['t0'] + time / 24.
         
         # If lon_0 is set, calculate how many indices have to be moved in 
         # order for latitude array to start at lon_0.
         lon, lat, xlim, ylim, ii, jj = self.getLongitudeLatitudeLimits(lon,
             lat, xlim, ylim)
+        
         self.params['xlim'], self.params['ylim'] = xlim, ylim
         self.params['lon_i'], self.params['lat_j'] = ii, jj
         
-        # Creates a structured array for start year, start day, end year and 
-        # end day. Aftwerwards, the dates are converted from julian day to 
-        # matplotlib format, i.e. days since 0001-01-01 UTC.
-        time_list = array([('%s-01-01' % (item[1]), atof(item[2]), 
-            '%s-01-01' % (item[3]), atof(item[4])) for item in match], 
-            dtype=[('start_year', 'a10'), ('start_day', 'f2'), 
-            ('end_year', 'a10'), ('end_day', 'f2')])
-        time_start = (dates.datestr2num(time_list['start_year']) + 
-            time_list['start_day'] - 1)
-        time_end = (dates.datestr2num(time_list['end_year']) + 
-            time_list['end_day'] - 1)
-        time_middle = 0.5 * (time_start + time_end)
-        
         # Initializes the grid attributes, dimensions, coordinates and
         # variables.
-        self.name = 'mass_concentration_of_chlorophyll_a_in_sea_water'
-        self.description = ('Chlorophyll-a pigment concentration '
-            'inferred from satellite visible light radiance measurements.')
-        self.attributes['institution'] = HDF_att['Data Center']
-        self.attributes['sensor name'] = HDF_att['Sensor Name']
-        self.dimensions = dict(n=time_middle.size, k=0, j=lat.size, i=lon.size)
+        self.name = 'ncep_reanalysis'
+        self.description = ('NCEP Reanalysis project is analysis/forecast '
+            'system to perform data assimilation using past data from 1979 '
+            'owards.')
+        self.attributes['institution'] = data.institution
+        self.dimensions = dict(n=time.size, k=0, j=lat.size, i=lon.size)
         self.coordinates = dict(n='time', k='height', j='latitude',
             i='longitude')
         self.variables = dict(
@@ -148,19 +132,16 @@ class Grid(atlantis.data.Grid):
             height = atlantis.data.get_standard_variable('height'),
             latitude = atlantis.data.get_standard_variable('latitude'),
             longitude = atlantis.data.get_standard_variable('longitude'),
-            chla = atlantis.data.get_standard_variable(
-                'mass_concentration_of_chlorophyll_a_in_sea_water'
-            ),
             xm = atlantis.data.Variable(),
             ym = atlantis.data.Variable(),
         )
-        self.variables['time'].data = time_middle
+        #
+        self.variables['time'].data = time
         self.variables['time'].canonical_units = 'days since 0001-01-01 UTC' 
         #
         self.variables['height'].data = 0.
         self.variables['latitude'].data = lat
         self.variables['longitude'].data = lon
-        self.variables['chla'].canonical_units = 'mg m-3'
         #
         self.variables['xm'].canonical_units = 'km'
         self.variables['xm'].description = 'Zonal distance.'
@@ -170,7 +151,39 @@ class Grid(atlantis.data.Grid):
             metergrid(self.variables['longitude'].data, 
             self.variables['latitude'].data, units='km')
         )
+        #
+        data.close()
+
+        # Walks through each variable file for the first year, reads their 
+        # attributes and adds to the dataset definition.
+        _year = self.params['year_list'][0]
+        for _var in self.params['var_list']:
+            fname = '{}.{}.nc'.format(_var, _year)
+            data = self._open_file(fname)
+            for _key in data.variables.keys():
+                if _key in ['time', 'level', 'lat', 'lon']:
+                    continue
+                try:
+                    self.variables[_key] = atlantis.data.get_standard_variable(
+                        data.variables[_key].standard_name, 
+                        units=data.variables[_key].units
+                    )
+                except:
+                    self.variables[_key] = atlantis.data.Variable(
+                        units=data.variables[_key].units
+                    )
+                self.alias[_key] = _var
+            data.close()
+        #
         return
+        
+    def _open_file(self, fname):
+        """
+        Returns netCDF file according to dataset parameters and file 
+        name.
+        
+        """
+        return netcdf('{}/{}'.format(self.params['path'], fname), 'r')
     
     
     def read(self, t=None, z=None, y=None, x=None, N=None, K=None, J=None,
@@ -251,7 +264,7 @@ class Grid(atlantis.data.Grid):
         if y != None:
             J = flatnonzero(in1d(self.variables['latitude'].data, y))
         elif J == None:
-            J = arange(self.dimensions['j'])
+            J = arange(self.dimensions['j'])[::-1]
         if x != None:
             I = flatnonzero(in1d(self.variables['longitude'].data, x))
         elif I == None:
@@ -268,37 +281,81 @@ class Grid(atlantis.data.Grid):
         x = self.variables['longitude'].data[I]
         xx, yy = meshgrid(x, y)
         II, JJ = meshgrid(I, J)
-        var = ma.zeros(shape)
-        # Walks through every time index and loads data range from maps.
-        for n, T in enumerate(t):
-            t2 = time()
-            if profile:
-                s = '\rLoading data... %s ' % (profiler(shape[0], n + 1, 0, 
-                    t1, t2),)
-                stdout.write(s)
-                stdout.flush()
-            # Uncompresses and reads HDF file
-            HDF = self._open_HDF('%s/%s' % (self.params['path'], 
-                self.params['file_list'][N[n]]))
-            HDF_att = HDF.attributes()
-            # Loads scientific dataset (SDS) and calculates the parameter 
-            # value using scalling equation, slope and intercept.
-            SDS_name = HDF.datasets().keys()[0]
-            SDS = HDF.select(SDS_name)
-            SDS_att = SDS.attributes()
-            if (('lon_i' in self.params.keys()) &
-                ('lat_j' in self.params.keys())):
-                P = SDS[:, :][self.params['lat_j'], self.params['lon_i']][JJ,
-                    II]
-            else:
-                P = SDS[:, :][JJ, II]
-            P[P <= SDS_att['Fill']] = nan
-            P = (SDS_att['Slope'] * P + SDS_att['Intercept'])
-            P = ma.masked_where(isnan(P), P)
-            if nonan:
-                P.data[P.mask] = 0
+        val = dict()
+        
+        # Gets list of years to analyse.
+        YMD = num2ymd(t)
+        years = unique(YMD[:, 0])
+        
+        # Gets list of variables to load.
+        if var == None:
+            var = list(set(self.variables.keys()) - 
+                set(['time', 'height', 'latitude', 'longitude', 'ym', 'xm']))
+            
+        # Walks through every year loads data range from maps.
+        I_var, I_year = len(var), len(years)
+        _N = I_var * I_year
+        for i_var, _var in enumerate(var):
+            _val = ma.zeros(shape)
             #
-            var[n, 0, :, :] = P[None, None, :, :]
+            for i_year, _year in enumerate(years):
+                t2 = time()
+                if profile:
+                    s = '\rLoading data... %s ' % (profiler(_N, 
+                        i_var*I_var+i_year+1, 0, t1, t2),)
+                    stdout.write(s)
+                    stdout.flush()
+                
+                # Reads data file and extracts data values.
+                fname = '{}.{:.0f}.nc'.format(self.alias[_var], _year)
+                data = self._open_file(fname)
+                
+                # Reads time array from data and intersects it with time array
+                # to be loaded. Use `in1d` to get the intersect indicies.
+                _time = self.params['t0'] + data.variables['time'].data / 24.
+                sel = flatnonzero(in1d(_time, t))
+                les = flatnonzero(in1d(t, _time))
+                                
+                # Loads data and fits to desired grid.
+                __var = data.variables[_var]
+                
+                if __var.data.ndim == 4:
+                    __val = __var.data[sel, :, :, :]
+                elif __var.data.ndim == 3:
+                    __val = __var.data[sel, None, :, :]
+                else:
+                    raise ValueError('HELP! I crashed and I don\'t know what '
+                        'to do next.')
+                if ('lon_i' in self.params.keys()):
+                    __val = __val[:, :, :, self.params['lon_i'][0, :][I]]
+                else:
+                    __val = __val[:, :, :, I]
+                if ('lat_j' in self.params.keys()):
+                    __val = __val[:, :, self.params['lat_j'][:, 0][J], :]
+                else:
+                    __val = __val[:, :, J, :]
+                
+                # Sets missing values to nan. But first we have to make sure 
+                # that data in array are floating point numbers.
+                __val = __val.astype(float)
+                __val[(__val >= __var.missing_value)] = nan
+                
+                # And finally converts data according to scale factor and add 
+                # offset. Please refer to the following website for further 
+                # information 
+                #   http://www.esrl.noaa.gov/psd/data/gridded/faq.html
+                _val[les, :, :, :] = (__var.add_offset + 
+                    __val * __var.scale_factor)
+
+            # Masks invalid data.
+            _val = ma.masked_invalid(_val)
+            if nonan:
+                _val.data[_val.mask] = 0
+            #
+            val[_var] = _val
+        
+        if len(var) == 1:
+            val = val[var[0]]
         
         if profile:
             stdout.write('\r\n')
@@ -317,33 +374,12 @@ class Grid(atlantis.data.Grid):
             print 'shape: ', shape
         
         if result == 'full':
-            return t, z, y, x, var
+            return t, z, y, x, val
         elif result == 'indices':
-            return N, K, J, I, var
+            return N, K, J, I, val
         elif result == 'var only':
-            return var
+            return val
         else:
             raise Warning("Result parameter set imporperly to '%s', "
                 "assuming 'var only'." % (result))
             return var
-    
-    
-    def _open_HDF(self, file_path):
-        """Opens compressed HDF file and returns pointer."""
-
-        # STEP 1: Unzips image
-        fileHDF = './%s_%s.hdf' % (self.params['uuid'], 'dump')
-        fin = BZ2File(file_path, 'r')
-        fout = open(fileHDF, 'wb')
-        fout.write(fin.read())
-        fin.close()
-        fout.close()
-
-        # STEP 2: Opens HDF file
-        HDF = SD(fileHDF)
-        
-        # STEP 3: Cleanup
-        remove(fileHDF)
-        
-        # LAST STEP: Retruns HDF pointer
-        return HDF
