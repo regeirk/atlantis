@@ -31,7 +31,7 @@ from collections import OrderedDict
 from datetime import datetime
 from lxml import etree
 from matplotlib.dates import date2num, num2date, strpdate2num
-from numpy import arange, array, genfromtxt, ma
+from numpy import arange, array, asarray, genfromtxt, ma
 from StringIO import StringIO
 
 import atlantis.data
@@ -68,7 +68,7 @@ class Sequence(atlantis.data.Sequence):
                 'Bot. depth', 'Depth']
             units = [None, None, None, None, None, None, None, 'degrees_east',
                 'degrees_north', 'm', 'm']
-            fmt = ['{}', '{}', '{}', '{}', '{}', '{:.6f}', '{:.4f}', '{:.6f}', '{:.6f}', '{:.1f}', '{:.2f}']
+            fmt = ['{:s}', '{:s}', '{:s}', '{:s}', '{:s}', '{:.6f}', '{:.4f}', '{:.6f}', '{:.6f}', '{:.1f}', '{:.2f}']
             #
             for c, u, f in zip(fields, units, fmt):
                 var = atlantis.data.Variable(
@@ -188,12 +188,20 @@ class Sequence(atlantis.data.Sequence):
             if isinstance(value, basestring):
                 dump.append(u'//<{0}>{1}</{0}>'.format(key, value))
             elif isinstance(value, atlantis.data.Variable):
-                if value.string_format is None:
-                    value.string_format = '{:.2f}'
+                value.data = asarray(value.data)
+                if value.string_format in [None, '']:
+                    if value.data.dtype == float:
+                        value.string_format = '{:.2f}'
+                    elif value.data.dtype in [bool, 'S12', '<U10', '<U5']:
+                        value.string_format = '{:s}'
+                    else:
+                        print key, value.data.dtype, value.data
+                        raise ValueError('What should I do??')
                 s = '//<{}>'.format('DataVariable')
-                if value.units is not None:
+                if (value.units is not None) & (value.units != ''):
                     s += 'label=\"{} [{}]\"'.format(key, value.units)
-                elif value.canonical_units is not None:
+                elif (value.canonical_units is not None) & \
+                    (value.canonical_units != ''):
                     s += 'label=\"{} [{}]\"'.format(key, value.canonical_units)
                 else:
                     s += 'label=\"{}\"'.format(key)
@@ -222,7 +230,7 @@ class Sequence(atlantis.data.Sequence):
         """Returns human-readable data dump."""
         # Checks input parameters.
         if fields is None:
-            fields = self.fields
+            fields = self.fields.keys()
         # Header information
         file_header = OrderedDict([
             ('Encoding', 'UTF-8'),
@@ -262,7 +270,7 @@ class Sequence(atlantis.data.Sequence):
             #
             s = self[f].string_format
             if (s is None) | (s == ''):
-                string_formats[f] = '{:.2f}'
+                string_formats[f] = '{}'
             else:
                 string_formats[f] = s
         #
@@ -357,9 +365,10 @@ class Sequence(atlantis.data.Sequence):
         for child in root.iterchildren():
             if child.tag == 'DataVariable':
                 attributes = dict()
+                label = None
                 for key, value in re.findall(pattern, child.text):
                     if key == 'label':
-                        label, units = self._field_unit_from_column(column)
+                        label, units = self._field_unit_from_column(value)
                         attributes['units'] = units
                     else:
                         attributes[attrib_keys[key]] = value
@@ -393,7 +402,7 @@ class Sequence(atlantis.data.Sequence):
             Full path and file name to save the data. If omitted,
             assumes path indicated at sequence initialization.
         fields : sequence, optional
-            Sets the fields to be saved. Default is to save all fields
+            Sets the fields to read. Default is to read all fields
             in dataset.
 
         Returns
@@ -415,18 +424,34 @@ class Sequence(atlantis.data.Sequence):
         keys = fields.keys()
         # Sets data converters according to field names.
         converters = dict()
+        names, dtype = [], []
         for i, key in enumerate(keys):
-            if key == 'YYYY-MM-DD':
-                converters[i] = strpdate2num('%Y-%m-%d')
+            name = b'f{:d}'.format(i)
+            names.append(name)
+            if key == 'Station':
+                decode = lambda x: x.decode('utf-8')
+                converters[name] = decode
+                dtype.append((name, '<U32'))
+            elif key == 'YYYY-MM-DD':
+                converters[name] = strpdate2num('%Y-%m-%d')
+                dtype.append((name, b'<f8'))
             elif key == 'hh:mm':
-                converters[i] = strpdate2num('%H:%M')
+                converters[name] = strpdate2num('%H:%M')
+                dtype.append((name, b'<f8'))
+            elif fields[key].string_format == '{:s}':
+                dtype.append((name, b'<U32'))
+            elif fields[key].string_format[-2:] == 'f}':
+                dtype.append((name.format(i), b'<f8'))
+            else:
+                raise ValueError('What should I do with format {}?'.format(
+                    fields[key].string_format))
         # Converts data content in structured array using numpy.genfromtxt.
-        dat_keys = [b'{:d}'.format(a) for a in range(len(keys))]
-        dat = genfromtxt(url, delimiter=delimiter, skip_header=skip_header+1,
-            dtype=None, names=dat_keys, converters=converters)
+        dat = genfromtxt(StringIO(f), delimiter=delimiter,
+            skip_header=skip_header+1, dtype=dtype, converters=converters,
+            names=names)
         # Sets data in field container.
-        for dat_key, key in zip(dat_keys, keys):
-            fields[key].data = dat[dat_key]
+        for name, key in zip(names, keys):
+            fields[key].data = dat[name]
         # Updates class containers
         self.fields = fields
         # Update date and time.

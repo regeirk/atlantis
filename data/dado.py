@@ -87,7 +87,7 @@ class Connection():
 
     def escape_none(self, var):
         """Escape null variables."""
-        if var == None:
+        if var is None:
             return "NULL"
         return var
 
@@ -226,7 +226,7 @@ class Connection():
 
         for _item in variables:
             # Checks if variable ID has been set. If not, creates one.
-            if _item.id == None:
+            if _item.id is None:
                 _item.id = self.datavars_nextId()
             _sql = ('INSERT INTO datavars '
                 '(var_id, name, canonical_units, units, scale_factor, '
@@ -395,10 +395,10 @@ class Connection():
         """
         _result = list()
         #
-        if isinstance(project, int) & (where == None):
+        if isinstance(project, int) & (where is None):
             where = 'project_id={}'.format(project)
         #
-        if where != None:
+        if where is not None:
             _sql = 'SELECT * FROM projects '
             if isinstance(where, list) | isinstance(where, tuple):
                 where = ' OR '.join(where)
@@ -415,7 +415,7 @@ class Connection():
                 )
                 _result.append(_var)
         else:
-            if project == None:
+            if project is None:
                 project = []
             elif isinstance(project, basestring):
                 project = [project]
@@ -539,7 +539,7 @@ class Connection():
         """
         # TODO: station and project
         _where = ''
-        if project != None:
+        if project is not None:
             if isinstance(project, Project):
                 _where += 'project_id={}'.format(project.id)
             elif isinstance(project, int):
@@ -549,7 +549,7 @@ class Connection():
                 _where += 'project_id={}'.format(project.id)
             else:
                 raise ValueError('Invalid project `{}`.'.format(project))
-        if station != None:
+        if station is not None:
             if _where != '':
                 _where += ' AND '
             _where += 'name=\'{}\''.format(station)
@@ -586,7 +586,7 @@ class Connection():
             _ids.append('{}.{}'.format(_var.project.id, _var.id))
 
         if len(_result) == 0:
-            if create != None:
+            if create is not None:
                 # Creates the station and returns it.
                 create.id = self.stations_nextId(project=create.project)
                 self.stations_insert(create)
@@ -1077,7 +1077,7 @@ class Dataset(object):
 
     def get_variable(self, name=None):
         """Returns the variable dictionary or a single variable."""
-        if name == None:
+        if name is None:
             return self.var_list
         elif name in self.var_list.keys():
             return self.var_list[name]
@@ -1282,14 +1282,14 @@ class Sequence(atlantis.data.Sequence):
         # Makes sure data, minimum, maximum and standard deviation are saved
         # in canonical units.
         for key in var.keys():
-            if var[key].units == None:
+            if var[key].units is None:
                 _from = var[key].canonical_units
             else:
                 _from = var[key].units
             _to = var[key].canonical_units
             val[key] = atlantis.units.fromAtoB(val[key], _from, _to)
         for key in ['minimum', 'maximum', 'stdev']:
-            if kwargs[key] != None:
+            if kwargs[key] is not None:
                 kwargs[key] = atlantis.units.fromAtoB(kwargs[key], _from, _to,
                 vtype=key)
 
@@ -1309,7 +1309,7 @@ class Sequence(atlantis.data.Sequence):
         for i, (tt, zz, yy, xx) in enumerate(zip(t, z, y, x)):
             for vv in var.values():
                 _val = self._read_asarray(val[vv.standard_name], i)
-                if _val == None:
+                if _val is None:
                     continue
                 _data.append(dict(
                     project = station.project.id,
@@ -1587,7 +1587,7 @@ class Sequence(atlantis.data.Sequence):
                     'Invalid variable type ({})'.format(type(_item))
                 )
             # Skips unknown or variables.
-            if _var == None:
+            if _var is None:
                 continue
             if _counter > 0:
                 _where += ' OR '
@@ -1603,7 +1603,7 @@ class Sequence(atlantis.data.Sequence):
             _counter += 1
             # Add units to convert from and to.
             if units == 'units':
-                if _var.units == None:
+                if _var.units is None:
                     _var.units = _var.canonical_units
                 _units[_var_name] = (_var.canonical_units, _var.units)
             elif units == 'canonical_units':
@@ -1654,7 +1654,7 @@ class Sequence(atlantis.data.Sequence):
         else:
             raise ValueError('Quality flag `{}` not implemented yet.'.format(quality))
         # Merges where clauses
-        if (where != None):
+        if (where is not None):
             if _where == '':
                 _where = where
             else:
@@ -1718,7 +1718,7 @@ class Sequence(atlantis.data.Sequence):
         except:
             print type(x), x, size, dtype
             raise ValueError('AAAhhhh!!!')
-        if (size != None) & (x.size == 1):
+        if (size is not None) & (x.size == 1):
             return x.repeat(size)
         else:
             return x
@@ -1752,9 +1752,9 @@ class Sequence(atlantis.data.Sequence):
             for _istart, _istop in zip(_start, _stop):
                 if where_time != '':
                     where_time += ' OR '
-                if (_istart != None) & (_istop == None):
+                if (_istart is not None) & (_istop is None):
                     where_time += '({}={})'.format(column, _istart)
-                elif _istop != None:
+                elif _istop is not None:
                     where_time += '({} BETWEEN \'{}\' AND \'{}\')'.format(
                         column, _istart, _istop
                     )
@@ -1763,7 +1763,7 @@ class Sequence(atlantis.data.Sequence):
             elif where_time != '':
                 where = '{} AND ({})'.format(where, where_time)
         elif type(x) in [int, float, str]:
-            if (radius == 0) or (radius == None):
+            if (radius == 0) or (radius is None):
                 where = '{} AND ({}={})'.format(where, column, x)
             else:
                 where = '{} AND ({}>={}-{} AND {}<={}+{})'.format(
@@ -1781,7 +1781,7 @@ class Sequence(atlantis.data.Sequence):
 
     def _start_stop(self, t, radius=0.):
         _fmt = '%Y-%m-%d %H:%M:%S'
-        if t == None:
+        if t is None:
             if isinstance(radius, list) | isinstance(radius, tuple):
                 if type(radius[0]) in [float64, float32, float, int, str,
                                        unicode]:

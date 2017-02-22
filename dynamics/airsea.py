@@ -197,10 +197,10 @@ class BulkFluxes():
         # Apppends data to class items.
         self.__setitem__('Tau_x', data.get_standard_variable(
             'surface_downward_northward_stress', data=Tau.imag,
-            string_format={:.4f}))
+            string_format='{:.4f}'))
         self.__setitem__('Tau_y', data.get_standard_variable(
             'surface_downward_eastward_stress', data=Tau.real,
-            string_format={:.4f}))
+            string_format='{:.4f}'))
         self.__setitem__('QH',  data.get_standard_variable(
             'surface_downward_sensible_heat_flux', data=QH))
         self.__setitem__('QE', data.get_standard_variable(

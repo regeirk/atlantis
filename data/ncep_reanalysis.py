@@ -31,12 +31,11 @@ __version__ = '$Revision: 1 $'
 # $Source$
 
 from matplotlib import dates
-from numpy import (arange, argsort, array, asarray, flatnonzero, in1d, isnan, 
+from numpy import (arange, argsort, array, asarray, flatnonzero, in1d, isnan,
     ma, meshgrid, nan, ones, unique, hstack)
 from os import listdir
 from scipy.io import netcdf_file as netcdf
 from string import atof
-from sys import stdout
 from time import time
 
 import atlantis.data
@@ -47,14 +46,9 @@ DEBUG = False
 
 class Grid(atlantis.data.Grid):
     """Common grid for NCEP Reanalysis dataset.
-    
+
     """
-    def _message(self, s):
-        if DEBUG:
-            stdout.write(s)
-            stdout.flush()
-    
-    
+
     def __init__(self, path=None, xlim=None, ylim=None, tlim=None):
         # Initializes the variables to default values. The indices 'n', 'k',
         # 'j' and 'i' refer to the temporal, height, meridional and zonal
@@ -78,23 +72,23 @@ class Grid(atlantis.data.Grid):
         self.params['path'] = path
         self.params['var_list'] = []
         self.params['year_list'] = []
-        
-        # Generates list of files, tries to match them to the pattern and to 
-        # extract the time. To help understanding the naming convetion and 
+
+        # Generates list of files, tries to match them to the pattern and to
+        # extract the time. To help understanding the naming convetion and
         # pattern, see the following example:
         #   uwnd.2015.nc
         file_pattern = '(.*).([0-9]{4}).nc'
         flist = listdir(self.params['path'])
         flist, match = reglist(flist, file_pattern)
         self.params['file_list'] = flist
-        
+
         # Gets list of variables from file match.
         _vars, _years = zip(*match)
         self.params['var_list'] = unique(_vars)
         self.params['year_list'] = unique(_years)
-        
+
         # Loads data from first variable and loads longitude and latitude data.
-        # We assume that all data is homogeneous throughout the dataset. Then 
+        # We assume that all data is homogeneous throughout the dataset. Then
         # walks through each year and loads time vector.
         _var = self.params['var_list'][0]
         for _i, _year in enumerate(self.params['year_list']):
@@ -111,21 +105,22 @@ class Grid(atlantis.data.Grid):
                 time = data.variables['time'].data
             else:
                 time = hstack([time, data.variables['time'].data])
-        
-        # Time in dataset is given in `hours since 1800-1-1 00:00:0.0` and we 
+
+        # Time in dataset is given in `hours since 1800-1-1 00:00:0.0` and we
         # convert it to matplotlib's date format.
+
         if data.variables['time'].units == 'hours since 1800-1-1 00:00:0.0':
             self.params['t0'] = dates.date2num(dates.datetime.datetime(1800, 1, 1, 0, 0))
             time = self.params['t0'] + time / 24.
-        
-        # If lon_0 is set, calculate how many indices have to be moved in 
+
+        # If lon_0 is set, calculate how many indices have to be moved in
         # order for latitude array to start at lon_0.
         lon, lat, xlim, ylim, ii, jj = self.getLongitudeLatitudeLimits(lon,
             lat, xlim, ylim)
-        
+
         self.params['xlim'], self.params['ylim'] = xlim, ylim
         self.params['lon_i'], self.params['lat_j'] = ii, jj
-        
+
         # Initializes the grid attributes, dimensions, coordinates and
         # variables.
         self.name = 'ncep_reanalysis'
@@ -146,7 +141,7 @@ class Grid(atlantis.data.Grid):
         )
         #
         self.variables['time'].data = time
-        self.variables['time'].canonical_units = 'days since 0001-01-01 UTC' 
+        self.variables['time'].canonical_units = 'days since 0001-01-01 UTC'
         #
         self.variables['height'].data = 0.
         self.variables['latitude'].data = lat
@@ -157,13 +152,13 @@ class Grid(atlantis.data.Grid):
         self.variables['ym'].canonical_units = 'km'
         self.variables['ym'].description = 'Meridional distance.'
         self.variables['xm'].data, self.variables['ym'].data = (
-            metergrid(self.variables['longitude'].data, 
+            metergrid(self.variables['longitude'].data,
             self.variables['latitude'].data, units='km')
         )
         #
         data.close()
 
-        # Walks through each variable file for the first year, reads their 
+        # Walks through each variable file for the first year, reads their
         # attributes and adds to the dataset definition.
         self._message('\n')
         _year = self.params['year_list'][0]
@@ -178,7 +173,7 @@ class Grid(atlantis.data.Grid):
                     continue
                 try:
                     self.variables[_key] = atlantis.data.get_standard_variable(
-                        data.variables[_key].standard_name, 
+                        data.variables[_key].standard_name,
                         units=data.variables[_key].units,
                         long_name=data.variables[_key].long_name,
                     )
@@ -196,17 +191,17 @@ class Grid(atlantis.data.Grid):
             data.close()
         #
         return
-    
-        
+
+
     def _open_file(self, fname):
         """
-        Returns netCDF file according to dataset parameters and file 
+        Returns netCDF file according to dataset parameters and file
         name.
-        
+
         """
         return netcdf('{}/{}'.format(self.params['path'], fname), 'r')
-    
-    
+
+
     def read(self, t=None, z=None, y=None, x=None, N=None, K=None, J=None,
         I=None, var=None, nonan=True, result='full', profile=False,
         dummy=False):
@@ -257,7 +252,7 @@ class Grid(atlantis.data.Grid):
         """
         global DEBUG
         t1 = time()
-        
+
         # Checks input variables for consistency.
         if (t is not None) & (N is not None):
             raise ValueError('Both time and temporal index were provided.')
@@ -290,7 +285,7 @@ class Grid(atlantis.data.Grid):
             I = flatnonzero(in1d(self.variables['longitude'].data, x))
         elif I is None:
             I = arange(self.dimensions['i'])
-        
+
         # Sets the shape of the data array.
         shape = (len(N), 1, len(J), len(I))
         if dummy:
@@ -303,16 +298,16 @@ class Grid(atlantis.data.Grid):
         xx, yy = meshgrid(x, y)
         II, JJ = meshgrid(I, J)
         val = dict()
-        
+
         # Gets list of years to analyse.
         YMD = num2ymd(t)
         years = unique(YMD[:, 0])
-        
+
         # Gets list of variables to load.
         if var == None:
-            var = list(set(self.variables.keys()) - 
+            var = list(set(self.variables.keys()) -
                 set(['time', 'height', 'latitude', 'longitude', 'ym', 'xm']))
-            
+
         # Walks through every year loads data range from maps.
         I_var, I_year = len(var), len(years)
         _N = I_var * I_year
@@ -322,24 +317,23 @@ class Grid(atlantis.data.Grid):
             for i_year, _year in enumerate(years):
                 t2 = time()
                 if profile:
-                    s = '\rLoading data... %s ' % (profiler(_N, 
+                    s = '\rLoading data... %s ' % (profiler(_N,
                         i_var*I_var+i_year+1, 0, t1, t2),)
-                    stdout.write(s)
-                    stdout.flush()
-                
+                    self._message(s)
+
                 # Reads data file and extracts data values.
                 fname = '{}.{:.0f}.nc'.format(self.alias[_var], _year)
                 data = self._open_file(fname)
-                
+
                 # Reads time array from data and intersects it with time array
                 # to be loaded. Use `in1d` to get the intersect indicies.
                 _time = self.params['t0'] + data.variables['time'].data / 24.
                 sel = flatnonzero(in1d(_time, t))
                 les = flatnonzero(in1d(t, _time))
-                                
+
                 # Loads data and fits to desired grid.
                 __var = data.variables[_var]
-                
+
                 if __var.data.ndim == 4:
                     __val = __var.data[sel, :, :, :]
                 elif __var.data.ndim == 3:
@@ -355,17 +349,17 @@ class Grid(atlantis.data.Grid):
                     __val = __val[:, :, self.params['lat_j'][:, 0][J], :]
                 else:
                     __val = __val[:, :, J, :]
-                
-                # Sets missing values to nan. But first we have to make sure 
+
+                # Sets missing values to nan. But first we have to make sure
                 # that data in array are floating point numbers.
                 __val = __val.astype(float)
                 __val[(__val >= __var.missing_value)] = nan
-                
-                # And finally converts data according to scale factor and add 
-                # offset. Please refer to the following website for further 
-                # information 
+
+                # And finally converts data according to scale factor and add
+                # offset. Please refer to the following website for further
+                # information
                 #   http://www.esrl.noaa.gov/psd/data/gridded/faq.html
-                _val[les, :, :, :] = (__var.add_offset + 
+                _val[les, :, :, :] = (__var.add_offset +
                     __val * __var.scale_factor)
 
             # Masks invalid data.
@@ -374,14 +368,14 @@ class Grid(atlantis.data.Grid):
                 _val.data[_val.mask] = 0
             #
             val[_var] = _val
-        
+
         if len(var) == 1:
             val = val[var[0]]
-        
+
         if profile:
             stdout.write('\r\n')
             stdout.flush()
-        
+
         if DEBUG:
             print 't: ', t
             print 'z: ', z
@@ -393,7 +387,7 @@ class Grid(atlantis.data.Grid):
             print 'J: ', J
             print 'I:', I
             print 'shape: ', shape
-        
+
         if result == 'full':
             return t, z, y, x, val
         elif result == 'indices':

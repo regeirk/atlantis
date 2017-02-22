@@ -474,6 +474,13 @@ class Sequence(object):
 
 class Grid(object):
     """Defines a spatio temporal dataset grid."""
+
+    def _message(self, s):
+        """Writes message to standard output."""
+        stdout.write(s)
+        stdout.flush()
+
+
     def __init__(self, path=None, pattern=None, xlim=None, ylim=None):
         # Initializes the variables to default values. The indices 'n', 'k',
         # 'j' and 'i' refer to the temporal, height, meridional and zonal
@@ -741,8 +748,7 @@ class Grid(object):
             if profile:
                 s = '\rLoading \'{0}\' data... {1} '.format(nvar,
                     profiler(shape[0], n + 1, 0, t1, t2))
-                stdout.write(s)
-                stdout.flush()
+                self._message(s)
             for nvar in var_list:
                 # Reads numpy map file, masks where NaN and if appropriate,
                 # change masked data values to zero.
@@ -770,16 +776,14 @@ class Grid(object):
             #
             if DEBUG:
                 if (n+1) % 10 == 0:
-                    stdout.write('|')
+                    self._message('|')
                 elif (n+1) % 5 == 0:
-                    stdout.write(':')
+                    self._message(':')
                 else:
-                    stdout.write('.')
-                stdout.flush()
+                    self._message('.')
 
         if profile:
-            stdout.write('\r\n')
-            stdout.flush()
+            self._message('\r\n')
 
         if var_list_length == 1:
             var = var[var.keys()[0]]
@@ -895,8 +899,7 @@ class Grid(object):
             if profile:
                 s = '\rCalculating climatology... %s ' % (profiler(12, i, 0,
                     t1, t2),)
-                stdout.write(s)
-                stdout.flush()
+                self._message(s)
             # Initializes sum and weight arrays, selects appropriate data range
             # and walksthrough every data map (grid) to calculate
             # climatological mean.
@@ -927,15 +930,13 @@ class Grid(object):
                 if profile:
                     s = '\rCalculating climatology... %s ' % (profiler(12,
                         i + (j + 1) / n,  0,  t1, t2),)
-                    stdout.write(s)
-                    stdout.flush()
+                    self._message(s)
             #
             for item in var_clim.keys():
                 var_clim[item][i, :, :, :] = var_sum[item] / var_weight[item]
         #
         if profile:
-            stdout.write('\r\n')
-            stdout.flush()
+            self._message('\r\n')
         #
         for item in var_clim.keys():
             var_clim[item].mask = (var_clim[item].mask |
@@ -995,17 +996,21 @@ class Grid(object):
         Returns the spatial indices according to the longitude
         and latitude limits.
 
-        PARAMETERS
-            lon, lat (array like) :
-                Longitude and latitude arrays.
-            xlim, ylim (list, optional) :
-                Longitude and latitude limits.
+        Parameters
+        ----------
+        lon, lat : array like
+            Longitude and latitude arrays.
+        xlim, ylim : list, optional
+            Longitude and latitude limits.
 
-        RETURNS
-            xlim, ylim (list) :
-                Sorted limits.
-            I, J (list) :
-                Indices mesh arrays.
+        Returns
+        -------
+        lon, lat : array like
+            Longitude and latitude arrays according to limits.
+        xlim, ylim : array like
+            Sorted limits.
+        ii, jj : array like
+            Mesh arrays of zonal and meridional indices.
 
         """
         # If xlim and ylim are set, calculate how many indices have to be moved
@@ -1266,8 +1271,7 @@ class Grid(object):
                 t2 = time()
                 s = '\rCalculating coefficients, %s... %s ' % (descriptor,
                     profiler(J, j, 0, t1, t2))
-                stdout.write(s)
-                stdout.flush()
+                self._message(s)
             for i in range(I):
                 A = zeros((q, q))
                 if direction == 'i':
@@ -1314,12 +1318,10 @@ class Grid(object):
             if profile:
                 s = '\rCalculating coefficients, %s... %s ' % (descriptor,
                     profiler(J, j+1, 0, t1, t2))
-                stdout.write(s)
-                stdout.flush()
+                self._message(s)
         #
         if profile:
-            stdout.write('\n\r')
-            stdout.flush()
+            self._message('\n\r')
         #
         if DEBUG:
             print 'coeffs[%s%d] = ' % (direction, p), coeffs, coeffs.shape
